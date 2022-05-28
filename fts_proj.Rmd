@@ -1,0 +1,443 @@
+---
+title: "fts_proj"
+author: "Jianqi Zhu"
+date: "4/24/2022"
+output: pdf_document
+---
+
+```{r}
+library(zoo)
+library(tseries)
+library(forecast)
+library(quantmod)
+```
+
+```{r}
+symbols_list <- c("MMM","AXP", "AMGN","AAPL","BA","CAT","CVX","CSCO","KO","DIS","DOW","GS","HD","HON","IBM",
+    "INTC","JNJ", "JPM","MCD", "MRK","MSFT","NKE","PG","CRM","TRV","UNH","VZ","V","WBA","WMT")
+
+getSymbols(symbols_list)
+
+getSymbols("DJI",src='yahoo')
+seri <- dailyReturn(DJI,type='log')
+for (symbol in symbols_list){
+  sub_seri <- dailyReturn(get(symbol),type='log')
+  seri <- merge(seri,sub_seri)
+}
+
+
+```
+
+```{r}
+col_names=c('DJI',"MMM","AXP", "AMGN","AAPL","BA","CAT","CVX","CSCO","KO","DIS","DOW","GS","HD","HON","IBM","INTC","JNJ", "JPM","MCD", "MRK","MSFT","NKE","PG","CRM","TRV","UNH","VZ","V", "WBA", "WMT")
+data=data.frame(seri)
+names(data)=col_names
+
+data[is.na(data)] <- 0
+data <- subset (data, select = -c(V,DOW))
+#data = na.locf(data,na.rm=FALSE,fromLast=TRUE)
+```
+
+```{r}
+check <- data$AAPL
+Box.test(check)
+adf.test(check)
+acf(check)
+pacf(check)
+
+ar(check)
+
+auto.arima(check)
+arima(check,order=c(5,0,3))
+```
+
+```{r}
+#training_data <- data[1:3000,]
+#testing_data <- data[3001:nrow(data),]
+training_data <- read.csv('insample.csv')
+row.names(training_data) <- training_data$X
+training_data$X <- NULL
+```
+
+```{r}
+acf_ord <- list()
+pacf_ord <- list()
+symbols <- names(training_data)
+for (ticker in symbols){
+  ts <- training_data[ticker][,1]
+  ts_acf <- acf(ts,plot=FALSE,lag.max = 40)
+  ts_pacf <- pacf(ts,plot=FALSE,lag.max = 40)
+  
+  lag <- 35
+  crit <- 1.96/sqrt(dim(training_data)[1]-lag)
+  
+  is_acf_sig <- (abs(ts_acf$acf)>crit)
+  is_pacf_sig <- (abs(ts_pacf$acf)>crit)
+  
+  sig_ord_acf <- c()
+  sig_ord_pacf <- c()
+  
+  for (ord in index(is_acf_sig)){
+    #print(ticker)
+    #print(is_acf_sig)
+    if (is_acf_sig[ord]){
+      sig_ord_acf <- c(sig_ord_acf,ord)
+    }
+  }
+  for (ord in index(is_pacf_sig)){
+    if (is_pacf_sig[ord]){
+      sig_ord_pacf <- c(sig_ord_pacf,ord)
+    }
+  }
+  acf_ord <- c(acf_ord,list(sig_ord_acf))
+  pacf_ord <- c(pacf_ord,list(sig_ord_pacf))
+}
+#acf_ord
+#pacf_ord
+names(acf_ord) <- symbols
+names(pacf_ord) <- symbols
+```
+
+```{r}
+count_acf <- c()
+for (i in 1:length(acf_ord)){
+  count_acf <- c(count_acf,unlist(acf_ord[i],use.names = FALSE))
+}
+png(file="Count of Significant Lags in ACF (with differencing).png",width=900,height=510)
+hist(count_acf,breaks=0:(length(tabulate(count_acf))+1),labels = TRUE,xlab="lag",ylab="Frequency",main="Count of Significant Lags in ACF (with differencing)")
+dev.off
+```
+
+```{r}
+count_pacf <- c()
+for (i in 1:length(pacf_ord)){
+  count_pacf <- c(count_pacf,unlist(pacf_ord[i],use.names = FALSE))
+}
+png(file="Count of Significant Lags in PACF (with differencing).png",width=900,height=510)
+hist(count_pacf,breaks=0:(length(tabulate(count_pacf))+1),labels = TRUE,xlab="lag",ylab="Frequency",main="Count of Significant Lags in PACF (with differencing)")
+dev.off
+```
+
+
+```{r}
+symbols <- names(pred)
+
+first_time <- TRUE
+for (ticker in symbols){
+  ts <- training_data[ticker][,1]
+  ts_acf <- acf(ts,plot=FALSE,lag.max = 20)
+  ts_pacf <- pacf(ts,plot=FALSE,lag.max = 20)
+  
+  if (first_time){
+    acf_cum <- abs(ts_acf$acf)
+    pacf_cum <- abs(ts_pacf$acf)
+    first_time <- FALSE
+  }else{
+    acf_cum <- acf_cum + abs(ts_acf$acf)
+    pacf_cum <- pacf_cum + abs(ts_pacf$acf)
+  }
+}
+
+```
+
+
+```{r}
+png(file="Aggregate View of ACF (without differencing).png",width=900,height=510)
+plot(1:length(c(acf_cum)),c(acf_cum),type='l',xlab = 'lag',ylab = 'Sum of Absolute Statistics',main='Aggregate View of ACF',)
+grid()
+dev.off
+```
+```{r}
+png(file="Aggregate View of PACF for (without differencing).png",width=900,height=510)
+plot(1:length(c(pacf_cum)),c(pacf_cum),type='l',xlab = 'lag',ylab = 'Sum of Absolute Statistics',main='Aggregate View of PACF')
+grid()
+dev.off
+```
+
+```{r}
+plot(1:length(pacf_cum),c(pacf_cum))
+plot(1:length(acf_cum),c(acf_cum))
+```
+
+
+```{r}
+testing_data <- read.csv('testing_data.csv',row.names = 1)
+
+garch <- read.csv('new.csv',row.names = 1)
+garch[is.na(garch)] <-  0
+
+arim <- read.csv('ARIMA.csv',row.names = 1)
+arim[is.na(arim)] <-  0
+
+back_testing_garch <- data.frame(rep(NaN,length(row.names(testing_data))))
+back_testing_arima <- data.frame(rep(NaN,length(row.names(testing_data))))
+
+row.names(back_testing_garch) <- row.names(testing_data)
+row.names(back_testing_arima) <- row.names(testing_data)
+
+colnames(back_testing_garch) <- c('Return')
+colnames(back_testing_arima) <- c('Return')
+
+num_sto <- 3
+for (date in row.names(back_testing_arima)){
+  
+  cur_row_g <- garch[date,]
+  order_vec_g <- rank(cur_row_g)
+  
+  long_stoc_g <- names(cur_row_g[which(order_vec_g>=(30-num_sto))])
+  long_g <- testing_data[date,long_stoc_g]
+  long_ret_g <- mean(unlist(long_g))
+  
+  short_stoc_g <- names(cur_row_g[which(order_vec_g<=num_sto)])
+  short_g <- testing_data[date,short_stoc_g]
+  short_ret_g <- mean(unlist(short_g))
+  
+  back_testing_garch[date,1] <-  short_ret_g
+  
+  cur_row_a <- arim[date,]
+  order_vec_a <- rank(cur_row_a)
+  
+  long_stoc_a <- names(cur_row_a[which(order_vec_a>=(30-num_sto))])
+  long_a <- testing_data[date,long_stoc_a]
+  long_ret_a <- mean(unlist(long_a))
+  
+  short_stoc_a <- names(cur_row_a[which(order_vec_a<=num_sto)])
+  short_a <- testing_data[date,short_stoc_a]
+  short_ret_a <- mean(unlist(short_a))
+  
+  back_testing_arima[date,1] <-  short_ret_a
+}
+```
+
+```{r}
+png(file="Cumulative Return of the Portfolio With ARMA-GARCH Model.png",width=890,height=480,res=100)
+plot(as.Date(row.names(back_testing_garch)),cumprod(1+back_testing_garch[,1])-1,type='l',ylim=c(-0.32,0.73),xlab='Date',ylab='Cumulative Return',main='Cumulative Return of the Portfolio With ARMA-GARCH Model',col=2)
+lines(as.Date(row.names(back_testing_garch)),unlist(cumprod(1+testing_data['DJI'])-1),col='navy')
+legend("bottomright",lwd=3, legend = c("ARMA-GARCH Portfolio", "DJI"), col = c(2, "navy"))
+grid()
+dev.off
+```
+```{r}
+png(file="Cumulative Return of the Portfolio With ARIMA Model.png",width=890,height=480,res=100)
+plot(as.Date(row.names(back_testing_arima)),cumprod(1+back_testing_arima[,1])-1,type='l',ylim=c(-0.32,0.73),xlab='Date',ylab='Cumulative Return',main='Cumulative Return of the Portfolio With ARIMA Model',col=2)
+lines(as.Date(row.names(back_testing_garch)),unlist(cumprod(1+testing_data['DJI'])-1),col='navy')
+legend("bottomright",lwd=3, legend = c("ARIMA Portfolio", "DJI"), col = c(2, "navy"))
+grid()
+dev.off
+```
+
+```{r}
+png(file="Summary Three.png",width=890,height=480,res=100)
+plot(as.Date(row.names(back_testing_arima)),cumprod(1+back_testing_arima[,1])-1,type='l',ylim=c(-0.32,0.73),xlab='Date',ylab='Cumulative Return',main='Cumulative Return of the Portfolio With ARIMA Model',col=3)
+line(as.Date(row.names(back_testing_garch)),cumprod(1+back_testing_garch[,1])-1)
+lines(as.Date(row.names(back_testing_garch)),unlist(cumprod(1+testing_data['DJI'])-1),col='navy')
+dev.off
+```
+
+```{r}
+annual_arima <- cumprod(1+back_testing_arima)-1
+annual_arima <- (1 + annual_arima$Return[length(annual_arima$Return)])^(365/1244) - 1
+std_arima <- sd(unlist(back_testing_arima)) * sqrt(365)
+sharpe_arima <- (annual_arima - 0.000888973684210526)/std_arima
+var_arima <- back_testing_arima$Return[which(rank(unlist(back_testing_arima)) == 43)]
+annual_arima
+std_arima
+sharpe_arima
+var_arima
+```
+
+```{r}
+annual_garch <- cumprod(1+back_testing_garch)-1
+annual_garch <- (1 + annual_garch$Return[length(annual_garch$Return)])^(365/1244) - 1
+std_garch <- sd(unlist(back_testing_garch)) * sqrt(365)
+sharpe_garch <- (annual_garch - 0.000888973684210526)/std_garch
+var_garch <- back_testing_garch$Return[which(rank(unlist(back_testing_garch)) == 43)]
+annual_garch
+std_garch
+sharpe_garch
+var_garch
+```
+
+```{r}
+annual_dji <- cumprod(1+testing_data['DJI'])-1
+annual_dji <- (1 + annual_dji$DJI[length(annual_dji$DJI)])^(365/1244) - 1
+std_dji <- sd(unlist(testing_data['DJI'])) * sqrt(365)
+sharpe_dji <- (annual_dji - 0.000888973684210526)/std_dji
+var_dji <- testing_data$DJI[which(rank(unlist(testing_data$DJI)) == 43)]
+annual_dji
+std_dji
+sharpe_dji
+var_dji
+```
+
+
+```{r}
+png(file="ACF of AAPL.png",width=800,height=430)
+acf(training_data$AAPL,main='ACF of AAPL')
+dev.off
+```
+
+```{r}
+png(file="PACF of AAPL.png",width=800,height=430)
+pacf(training_data$AAPL,main='PACF of AAPL')
+dev.off
+```
+
+```{r}
+png(file="Performance.png",width=5800,height=2430,res = 500)
+par(mfrow=c(1,3))
+hist(unlist(back_testing_arima),breaks = 50,ylim = c(0,350),labels=TRUE,xlab='Daily Return - ARIMA',main='')
+abline(v=-0.02205949,col='red')
+text(0.03,300,'VaR=-0.02205949',col='red')
+
+hist(unlist(back_testing_garch),breaks = 50,ylim = c(0,350),labels=TRUE,xlab='Daily Return - ARMA-GARCH',main='')
+abline(v=-0.02050062,col='red')
+text(0.02,300,'VaR=-0.02050062',col='red')
+
+hist(unlist(testing_data$DJI),breaks = 50,ylim = c(0,350),labels=TRUE,xlab='Daily Return - DJI',main='')
+abline(v=-0.01873663,col='red')
+text(-0.075,300,'VaR=-0.01873663',col='red')
+
+mtext("Histogram of Frequency of Daily Return",                   # Add main title
+      side = 3,
+      line = - 2,
+      outer = TRUE)
+dev.off
+```
+
+
+
+```{r}
+garch <- read.csv('lastarmagarch.xlsx.csv',row.names = 1)
+garch[is.na(garch)] <-  0
+
+arim <- read.csv('arima 1.csv',row.names = 1)
+arim[is.na(arim)] <-  0
+
+testing_data <- read.csv('testing_data.csv',row.names = 1)
+
+back_testing_garch <- data.frame(rep(NaN,length(row.names(testing_data))))
+back_testing_arima <- data.frame(rep(NaN,length(row.names(testing_data))))
+
+row.names(back_testing_garch) <- row.names(testing_data)
+row.names(back_testing_arima) <- row.names(testing_data)
+
+colnames(back_testing_garch) <- c('Return')
+colnames(back_testing_arima) <- c('Return')
+
+num_sto <- 2
+for (date in row.names(back_testing_arima)){
+  date_ind <- which(row.names(back_testing_arima)==date)
+  #if (date_ind == length(row.names(back_testing_arima))){
+   # break
+  #}
+  cur_row <- testing_data[date,]
+  
+  cur_row_g <- garch[date,]
+
+  order_vec_g <- rank(cur_row_g)
+  
+  long_stoc_g <- names(cur_row_g[which(order_vec_g>=(5-num_sto))])
+  long_g <- testing_data[date_ind,long_stoc_g]
+  long_ret_g <- mean(unlist(long_g))
+  
+  short_stoc_g <- names(cur_row_g[which(order_vec_g<=num_sto)])
+  short_g <- testing_data[date_ind,short_stoc_g]
+  short_ret_g <- mean(unlist(short_g))
+  
+  back_testing_garch[date_ind,1] <- long_ret_g - short_ret_g
+  
+  cur_row_a <- arim[date,]
+  order_vec_a <- rank(cur_row_a)
+  
+  long_stoc_a <- names(cur_row_a[which(order_vec_a>=(5-num_sto))])
+  long_a <- testing_data[date_ind,long_stoc_a]
+  long_ret_a <- mean(unlist(long_a))
+  
+  short_stoc_a <- names(cur_row_a[which(order_vec_a<=num_sto)])
+  short_a <- testing_data[date_ind,short_stoc_a]
+  short_ret_a <- mean(unlist(short_a))
+  
+  back_testing_arima[date_ind,1] <- short_ret_a
+}
+back_testing_arima[is.na(back_testing_arima)] <- 0
+back_testing_garch[is.na(back_testing_garch)] <- 0
+
+```
+
+```{r}
+png(file="ERROR Cumulative Return of the Portfolio With ARMA-GARCH Model.png",width=890,height=480,res=100)
+plot(as.Date(row.names(back_testing_garch)),cumprod(1+back_testing_garch[,1])-1,type='l',ylim=c(-0.32,0.73),xlab='Date',ylab='Cumulative Return',main='Cumulative Return of the Portfolio With ARMA-GARCH Model - long short dtrategy',col=2)
+lines(as.Date(row.names(back_testing_garch)),unlist(cumprod(1+testing_data['DJI'])-1),col='navy')
+legend("bottomright",lwd=3, legend = c("ARMA-GARCH Portfolio", "DJI"), col = c(2, "navy"))
+grid()
+dev.off
+```
+```{r}
+png(file="ERROR Cumulative Return of the Portfolio With ARIMA Model.png",width=890,height=480,res=100)
+plot(as.Date(row.names(back_testing_arima)),cumprod(1+back_testing_arima[,1])-1,type='l',ylim=c(-0.32,0.73),xlab='Date',ylab='Cumulative Return',main='Cumulative Return of the Portfolio With ARIMA Model',col=2)
+lines(as.Date(row.names(back_testing_garch)),unlist(cumprod(1+testing_data['DJI'])-1),col='navy')
+legend("bottomright",lwd=3, legend = c("ARIMA Portfolio", "DJI"), col = c(2, "navy"))
+grid()
+dev.off
+```
+
+
+
+```{r}
+pred <- read.csv('predSample.csv',row.names = 1)
+```
+
+```{r}
+plot(as.Date(row.names(pred)),unlist(pred$JPM),type='l')
+abline(h=0,col='red')
+```
+
+```{r}
+pred <- read.csv('arima 1.csv',row.names = 1)
+testing_data <- read.csv('testing_data.csv',row.names=1)
+target_stoc <- colnames(pred)
+back_testing_arma <- data.frame(rep(NaN,length(row.names(testing_data))))
+row.names(back_testing_arma) <- row.names(testing_data)
+colnames(back_testing_arma) <- c('Return')
+
+for (date in row.names(back_testing_arma)){
+  cur_row_fore <- pred[date,]
+  cur_row <- testing_data[date,target_stoc]
+  
+  pos_ret_ind <- which(cur_row_fore>=0)
+  neg_ret_ind <- which(cur_row_fore<0)
+  
+  if (length(pos_ret_ind)==0){
+    back_testing_arma[date,1] <- 0
+  }else{
+    back_testing_arma[date,1] <- mean(unlist(cur_row[pos_ret_ind]))
+    back_testing_arma[date,2] <- mean(unlist(cur_row[neg_ret_ind]))
+  }
+}
+back_testing_arma[is.na(back_testing_arma)] = 0
+cumprod(1+back_testing_arma)-1
+```
+```{r}
+annual_arma <- cumprod(1+back_testing_arma[,2])-1
+annual_arma <- (1 + annual_arma[length(annual_arma)])^(365/1244) - 1
+std_arma <- sd(unlist(back_testing_arma)) * sqrt(365)
+sharpe_arma <- (annual_arma - 0.000888973684210526)/std_arma
+var_arma <- back_testing_arma$Return[which(rank(unlist(back_testing_arma[,2])) == 43)]
+annual_arma
+std_arma
+sharpe_arma
+var_arma
+```
+
+
+
+```{r}
+png(file='arma_new.png',width=5800,height=2430,res = 500)
+plot(as.Date(row.names(back_testing_arma)),unlist(cumprod(1+back_testing_arma[,1])-1),type='l',col=2,ylab='Cumulative Return',xlab='Date',main='Strategy Based on ARMA(1,1)')
+lines(as.Date(row.names(back_testing_arma)),unlist(cumprod(1+back_testing_arma[,2])-1),col=3)
+lines(as.Date(row.names(back_testing_arma)),unlist(cumprod(1+testing_data['DJI'])-1),col='navy')
+legend("bottomright",lwd=3, legend = c("portfolio long stocks with positve forcast returns", "portfolio long stocks with negative forcast returns","DJI"), col = c(2,3, "navy"))
+grid()
+dev.off
+```
